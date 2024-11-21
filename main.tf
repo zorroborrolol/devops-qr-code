@@ -112,7 +112,6 @@ resource "aws_autoscaling_policy" "scale_up" {
   name                   = "scale-up-policy"
   scaling_adjustment     = 1
   adjustment_type        = "ChangeInCapacity"
-  cooldown               = 300
   policy_type            = "TargetTrackingScaling"
 
   target_tracking_configuration {
