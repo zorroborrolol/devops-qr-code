@@ -110,8 +110,6 @@ resource "aws_autoscaling_group" "web_asg" {
 
 resource "aws_autoscaling_policy" "scale_up" {
   name                   = "scale-up-policy"
-  scaling_adjustment     = 1
-  adjustment_type        = "ChangeInCapacity"
   policy_type            = "TargetTrackingScaling"
 
   target_tracking_configuration {
