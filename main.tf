@@ -16,12 +16,15 @@ data "aws_vpc" "selected" {
 }
 
 # Fetch all subnets in the selected VPC
-data "aws_subnet_ids" "all_subnets" {
-  vpc_id = data.aws_vpc.selected.id
+data "aws_subnets" "all_subnets" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.selected.id] # Dynamically refer to the VPC ID
+  }
 }
 
 data "aws_subnet" "selected" {
-  id = tolist(data.aws_subnet_ids.subnets.ids)[0]
+  id = tolist(data.aws_subnets.subnets.ids)[0]
 }
 
 # Fetch a specific security group (e.g., by name or ID)
@@ -51,7 +54,7 @@ resource "aws_lb" "myalb" {
   load_balancer_type = "application"
 
   security_groups = [data.aws_security_group.selected.id]
-  subnets         = [tolist(data.aws_subnet_ids.subnets.ids)[1], tolist(data.aws_subnet_ids.subnets.ids)[2]]
+  subnets         = [tolist(data.aws_subnets.subnets.ids)[1], tolist(data.aws_subnets.subnets.ids)[2]]
 
   tags = {
     Name = "web"
