@@ -2,41 +2,37 @@ provider "aws" {
   region = "us-east-1"
 }
 
-# Fetch all VPCs
-# data "aws_vpcs" "all" {}
-
-# Fetch a specific VPC (e.g., the first one from the list or based on a filter)
-#data "aws_vpc" "selected" {
-#  id = data.aws_vpcs.all.ids[0] # Use the first VPC
-#}
-
-# Fetch details of the existing VPC
 data "aws_vpc" "selected" {
-  id = "vpc-0a06c8d3ece3e6171" # Your VPC ID
+  id = "vpc-0a06c8d3ece3e6171"
 }
 
-# Fetch all subnets in the selected VPC
 data "aws_subnets" "all_subnets" {
   filter {
     name   = "vpc-id"
-    values = [data.aws_vpc.selected.id] # Dynamically refer to the VPC ID
+    values = [data.aws_vpc.selected.id]
   }
 }
 
 data "aws_subnet" "selected" {
-  id = tolist(data.aws_subnets.subnets.ids)[0]
+  id = data.aws_subnets.all_subnets.ids[0]
 }
 
-# Fetch a specific security group (e.g., by name or ID)
-/*data "aws_security_group" "selected" {
-  filter {
-    name   = "group-name"
-    values = ["my-security-group"] # Replace with your specific group name
-  }
-}*/
-
 data "aws_security_group" "selected" {
-  id = "sg-0dc92bfaa49456dc5" # Security group ID
+  id = "sg-0dc92bfaa49456dc5"
+}
+
+resource "aws_launch_template" "web_launch_template" {
+  name          = "web-launch-template"
+  image_id      = "ami-0866a3c8686eaeeba"
+  instance_type = "t2.micro"
+
+  network_interfaces {
+    associate_public_ip_address = true
+    security_groups             = [data.aws_security_group.selected.id]
+    subnet_id                   = data.aws_subnet.selected.id
+  }
+
+  user_data = base64encode(file("userdata.sh"))
 }
 
 resource "aws_instance" "webserver1" {
@@ -47,14 +43,13 @@ resource "aws_instance" "webserver1" {
   user_data              = base64encode(file("userdata.sh"))
 }
 
-#create alb
 resource "aws_lb" "myalb" {
   name               = "nginx-fleet"
   internal           = false
   load_balancer_type = "application"
 
   security_groups = [data.aws_security_group.selected.id]
-  subnets         = [tolist(data.aws_subnets.subnets.ids)[1], tolist(data.aws_subnets.subnets.ids)[2]]
+  subnets         = [data.aws_subnets.all_subnets.ids[1], data.aws_subnets.all_subnets.ids[2]]
 
   tags = {
     Name = "web"
@@ -90,14 +85,13 @@ resource "aws_lb_listener" "listener" {
   }
 }
 
-# Define the Auto Scaling Group (ASG)
 resource "aws_autoscaling_group" "web_asg" {
   launch_template {
     id      = aws_launch_template.web_launch_template.id
     version = "$Latest"
   }
 
-  vpc_zone_identifier = data.aws_subnets.all_subnets.ids # Use all subnets in the VPC
+  vpc_zone_identifier = data.aws_subnets.all_subnets.ids
   min_size            = 1
   max_size            = 3
   desired_capacity    = 1
@@ -114,7 +108,6 @@ resource "aws_autoscaling_group" "web_asg" {
   }
 }
 
-# Attach a Target Tracking Scaling Policy
 resource "aws_autoscaling_policy" "scale_up" {
   name                   = "scale-up-policy"
   scaling_adjustment     = 1
@@ -127,13 +120,11 @@ resource "aws_autoscaling_policy" "scale_up" {
       predefined_metric_type = "ASGAverageCPUUtilization"
     }
 
-    target_value = 50 # Target CPU utilization percentage
+    target_value = 50
   }
 
-  # Link the policy to the Auto Scaling Group by specifying the group name here
   autoscaling_group_name = aws_autoscaling_group.web_asg.name
 }
-
 
 output "loadbalancerdns" {
   value = aws_lb.myalb.dns_name
