@@ -1,127 +1,99 @@
-provider "aws" {
-  region = "us-east-1"
-}
-
-data "aws_vpc" "selected" {
-  id = "vpc-0a06c8d3ece3e6171"
-}
-
-data "aws_subnets" "all_subnets" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.selected.id]
-  }
-}
-
-data "aws_subnet" "selected" {
-  id = data.aws_subnets.all_subnets.ids[0]
-}
-
-data "aws_security_group" "selected" {
-  id = "sg-0dc92bfaa49456dc5"
-}
-
-resource "aws_launch_template" "web_launch_template" {
-  name          = "web-launch-template"
-  image_id      = "ami-0866a3c8686eaeeba"
-  instance_type = "t2.micro"
-
-  network_interfaces {
-    associate_public_ip_address = true
-    security_groups             = [data.aws_security_group.selected.id]
-  }
-
-  user_data = base64encode(file("userdata.sh"))
-}
-
-resource "aws_instance" "webserver1" {
-  ami                    = "ami-0866a3c8686eaeeba"
-  instance_type          = "t2.micro"
-  vpc_security_group_ids = [data.aws_security_group.selected.id]
-  subnet_id              = data.aws_subnet.selected.id
-  user_data              = base64encode(file("userdata.sh"))
-}
-
-resource "aws_lb" "myalb" {
-  name               = "nginx-fleet"
-  internal           = false
-  load_balancer_type = "application"
-
-  security_groups = [data.aws_security_group.selected.id]
-  subnets         = [data.aws_subnets.all_subnets.ids[1], data.aws_subnets.all_subnets.ids[2]]
-
-  tags = {
-    Name = "web"
-  }
-}
-
-resource "aws_lb_target_group" "tg" {
-  name     = "nginx-server-fleet"
-  port     = 80
-  protocol = "HTTP"
-  vpc_id   = data.aws_vpc.selected.id
-
-  health_check {
-    path = "/"
-    port = "traffic-port"
-  }
-}
-
-resource "aws_lb_target_group_attachment" "attach1" {
-  target_group_arn = aws_lb_target_group.tg.arn
-  target_id        = aws_instance.webserver1.id
-  port             = 80
-}
-
-resource "aws_lb_listener" "listener" {
-  load_balancer_arn = aws_lb.myalb.arn
-  port              = 80
-  protocol          = "HTTP"
-
-  default_action {
-    target_group_arn = aws_lb_target_group.tg.arn
-    type             = "forward"
-  }
-}
-
-resource "aws_autoscaling_group" "web_asg" {
-  launch_template {
-    id      = aws_launch_template.web_launch_template.id
-    version = "$Latest"
-  }
-
-  vpc_zone_identifier = data.aws_subnets.all_subnets.ids
-  min_size            = 1
-  max_size            = 3
-  desired_capacity    = 1
-
-  target_group_arns = [aws_lb_target_group.tg.arn]
-
-  health_check_type         = "ELB"
-  health_check_grace_period = 300
-
-  tag {
-    key                 = "Name"
-    value               = "asg-instance"
-    propagate_at_launch = true
-  }
-}
-
-resource "aws_autoscaling_policy" "scale_up" {
-  name                   = "scale-up-policy"
-  policy_type            = "TargetTrackingScaling"
-
-  target_tracking_configuration {
-    predefined_metric_specification {
-      predefined_metric_type = "ASGAverageCPUUtilization"
+pipeline {
+    agent any
+    
+    parameters {
+        booleanParam(name: 'PLAN_TERRAFORM', defaultValue: false, description: 'Check to plan Terraform changes')
+        booleanParam(name: 'APPLY_TERRAFORM', defaultValue: false, description: 'Check to apply Terraform changes')
+        booleanParam(name: 'DESTROY_TERRAFORM', defaultValue: false, description: 'Check to apply Terraform changes')
     }
-
-    target_value = 50
-  }
-
-  autoscaling_group_name = aws_autoscaling_group.web_asg.name
+    
+    environment {
+        // Define GitHub credentials as environment variables
+        GITHUB_CREDENTIALS = credentials('Github-zoorroborrolol')
+    }
+    
+    stages {
+        stage('Clone Repository') {
+            steps {
+                // Use GitHub credentials to access the repo
+                git credentialsId: 'Github-zoorroborrolol', url: 'https://github.com/zorroborrolol/devops-qr-code.git'
+            }
+        }
+        
+        stage('Install Terraform') {
+            steps {
+                script {
+                    // Install Terraform if not already installed
+                    sh 'curl -fsSL https://apt.releases.hashicorp.com/gpg | sudo apt-key add -'
+                    sh 'sudo apt-add-repository "deb https://apt.releases.hashicorp.com $(lsb_release -cs) main"'
+                    sh 'sudo apt-get update && sudo apt-get install terraform'
+                }
+            }
+        }
+        
+        stage('Terraform Init') {
+            steps {
+                script {
+                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'AWS-access-creds']]) {
+                        // Run Terraform init with AWS credentials
+                        sh 'terraform init'
+                    }
+                }
+            }
+        }
+        
+        stage('Terraform Validate') {
+            steps {
+                script {
+                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'AWS-access-creds']]) {
+                        // Run Terraform validate with AWS credentials
+                        sh 'terraform validate'
+                    }
+                }
+            }
+        }
+        
+        stage('Terraform Plan') {
+            steps {
+                script {
+                    if (params.PLAN_TERRAFORM) {
+                        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'AWS-access-creds']]) {
+                            // Run Terraform plan with AWS credentials
+                            sh 'terraform plan -out=tfplan'
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Terraform Apply') {
+            steps {
+                script {
+                    if (params.APPLY_TERRAFORM) {
+                        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'AWS-access-creds']]) {
+                            // Run Terraform apply with AWS credentials
+                            sh 'terraform apply -auto-approve tfplan'
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Terraform Destroy') {
+            steps {
+                script {
+                    if (params.DESTROY_TERRAFORM) {
+                        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'AWS-access-creds']]) {
+                            // Run Terraform destroy with AWS credentials
+                            sh 'terraform destroy -auto-approve'
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
-output "loadbalancerdns" {
-  value = aws_lb.myalb.dns_name
-}
+
+//sudo visudo
+/*add this: jenkins ALL=(ALL) NOPASSWD: /usr/bin/apt-get, /usr/bin/curl, /usr/bin/unzip*/
